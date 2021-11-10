@@ -9,6 +9,15 @@ https://sourceforge.net/projects/astylredfx/files/ original version looks like i
 teslaenergy@gmail.com any questions or concerns.
 
 
+compiling
+qmake-qt5 .
+make
+
+or 
+
+qmake && make
+
+qt creator can be used to open the pro file aswell
 
 hardware in guitarrig photo
 ![guitarrig](guitarrig.png)
