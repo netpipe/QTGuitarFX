@@ -20,11 +20,17 @@ MainWindow::MainWindow(QWidget *parent) :
     timer = new QTimer(this);
     connect(timer, SIGNAL(timeout()), this, SLOT(updateVolume()));
 
-
-    QDirIterator it("./Resource/themes/", QStringList() << "*.qss", QDir::Files, QDirIterator::Subdirectories);
+    QDirIterator it("./presets", QStringList() << "*.preset", QDir::Files, QDirIterator::Subdirectories);
     while (it.hasNext()){
       //  QFileInfo fileInfo(f.fileName());
-        ui->cmbTheme->addItem(it.next().toLatin1());
+        ui->SelectPresetCMB->addItem(it.next().toLatin1());
+    }
+
+
+    QDirIterator it2("./Resource/themes/", QStringList() << "*.qss", QDir::Files, QDirIterator::Subdirectories);
+    while (it2.hasNext()){
+      //  QFileInfo fileInfo(f.fileName());
+        ui->cmbTheme->addItem(it2.next().toLatin1());
     }
 
 
@@ -1878,7 +1884,8 @@ void MainWindow::on_FBG3_valueChanged(int value)
 void MainWindow::on_saveBTN_clicked()
 {
 
-QFile file2("settings.txt");
+
+QFile file2("./presets/"+ ui->savePreset->text().toLatin1() + ".preset");
     if(file2.open(QIODevice::ReadWrite | QIODevice::Text))// QIODevice::Append |
     {
             QTextStream stream(&file2);
@@ -1896,7 +1903,7 @@ QFile file2("settings.txt");
                stream << "DGainLN:" << ui->DGainLN->text().toLatin1() << endl;
                stream << "DClipLN:" << ui->DClipLN->text().toLatin1()<< endl;
                stream << "DCFactLN:" << ui->DCFactLN->text().toLatin1()<< endl;
-               stream << "checkBox_10:" << ui->checkBox_10->text().toLatin1()<< endl;
+               stream << "checkBox_10:" << ui->checkBox_10->isChecked()<< endl;
                stream << "checkBox:" << ui->checkBox->isChecked()<< endl;
                //////////////////////////////////////////////////////////
                stream << "TDepthLN:" << ui->TDepthLN->text().toLatin1()<< endl;
@@ -1988,6 +1995,14 @@ QFile file2("settings.txt");
         //                file.write("\n");
            file2.close();
     }
+    ui->SelectPresetCMB->clear();
+    ui->SelectPresetCMB->clear();
+    QDirIterator it("./presets/", QStringList() << "*.preset", QDir::Files, QDirIterator::Subdirectories);
+    while (it.hasNext()){
+      //  QFileInfo fileInfo(f.fileName());
+        ui->SelectPresetCMB->addItem(it.next().toLatin1());
+    }
+
 }
 
 void MainWindow::on_cmbTheme_currentIndexChanged(const QString &arg1)
@@ -2026,16 +2041,9 @@ void MainWindow::on_cmbTheme_currentIndexChanged(const QString &arg1)
 
 void MainWindow::on_LoadBTN_clicked()
 {
-
-//    QDirIterator it("./presets/", QStringList() << "*.presets", QDir::Files, QDirIterator::Subdirectories);
-//    while (it.hasNext()){
-//      //  QFileInfo fileInfo(f.fileName());
-//        ui->cmbTheme->addItem(it.next().toLatin1());
-//    }
-
     //https://stackoverflow.com/questions/31384273/how-to-search-for-a-string-in-a-text-file-using-qt
         QString searchString(":");
-        QFile MyFile("settings.txt");
+        QFile MyFile(ui->SelectPresetCMB->currentText());
         MyFile.open(QIODevice::ReadWrite);
         QTextStream in (&MyFile);
         QString line;
@@ -2069,7 +2077,7 @@ void MainWindow::on_LoadBTN_clicked()
             ui->DGainLN->setText(nums.at(8));
             ui->DClipLN->setText(nums.at(9));
             ui->DCFactLN->setText(nums.at(10));
-            ui->checkBox_10->setText(nums.at(11));
+            ui->checkBox_10->setChecked(nums.at(11).toInt());
             ui->checkBox->setChecked(nums.at(12).toInt());
           //////////////////////////////////////////////////////////
             ui->TDepthLN->setText(nums.at(12));
