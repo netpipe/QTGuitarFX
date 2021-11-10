@@ -1,0 +1,2 @@
+1. PulseAudio had to be disabled because it introduces unacceptable latency
+Applications->other->Startup Applications->uncheck pulseaudio
