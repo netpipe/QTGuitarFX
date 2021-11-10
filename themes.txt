@@ -1,6 +1,6 @@
+theme:./Resource/themes/qdarkstyle/qdarkstyle.qss
 theme:./Resource/themes/BreezeStyleSheets/dark.qss
-theme:./Resource/themes/BreezeStyleSheets/dark.qss
-/Resource/themes/BreezeStyleSheets/light.qss
+theme:./Resource/themes/BreezeStyleSheets/light.qss
 theme:./Resource/themes/qdarkstyle/qdarkstyle.qss
 theme:./Resource/themes/qdarkstyle/style.qss
 theme:./Resource/themes/QSS/ConsoleStyle.qss
@@ -20,5 +20,5 @@ theme:./Resource/themes/pink.qss
 theme:./Resource/themes/breezedarkgreen.qss
 theme:./Resource/themes/style2.qss
 theme:./Resource/themes/style.qss
-
-tyle.qss
+s
+s
