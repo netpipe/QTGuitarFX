@@ -314,7 +314,7 @@ public:
             for(int i =0;i<frames;i++)
             {
                 mutex.lock();
-                monosample= Volume*sin(3.14159/22050*(i+phase)*freq);
+                ///monosample= Volume*sin(3.14159/22050*(i+phase)*freq);
                 mutex.unlock();
                 char loB=monosample & 255;
                 char hiB=monosample >> 8 ;

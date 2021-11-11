@@ -1,6 +1,6 @@
-theme:./Resource/themes/qdarkstyle/qdarkstyle.qss
 theme:./Resource/themes/BreezeStyleSheets/dark.qss
-theme:./Resource/themes/BreezeStyleSheets/light.qss
+theme:./Resource/themes/BreezeStyleSheets/dark.qss
+heme:./Resource/themes/BreezeStyleSheets/light.qss
 theme:./Resource/themes/qdarkstyle/qdarkstyle.qss
 theme:./Resource/themes/qdarkstyle/style.qss
 theme:./Resource/themes/QSS/ConsoleStyle.qss

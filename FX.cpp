@@ -1,9 +1,12 @@
-# include <math.h>
 #include <iostream>
 #include <stdio.h>
 #include <jack/jack.h>
 #include <jack/types.h>
+#include <jack/midiport.h>
+//#include <handleMIDI.cpp>
+#include <math.h>
 
+//bool useJack=true;
 // FX - Globals
 long SN=0;//Sample Number
 long SamplingRate=44100;
@@ -19,6 +22,60 @@ bool ascending = false;
 bool iascending = false;
 float MedVal =0;//used by compressor
 bool First_Run = true;
+//Synth-Tuner
+float CurrentFreq=0;
+///////////////////////////////////////////////////////////////////////////
+//  Looper Params - Global
+///////////////////////////////////////////////////////////////////////////
+bool Enabled_Looper=false;
+float Rec_Buffer  [600*2*44100/*52920000*/];//600*2*44100;
+float Play_Buffer [600*2*44100/*52920000*/];//600*2*44100;
+//Looper looper(SamplingRate,Rec_Buffer, Play_Buffer);
+
+///////////////////////////////////////////////////////////////////////////
+//  FFT Params - Global
+///////////////////////////////////////////////////////////////////////////
+const long FFTSize =10000;
+const long N_FFT=10000;
+const long Kmax_FFT=256;
+const long CosOffset_FFT=2500;
+float FFTBufferL[FFTSize];
+float FFTBufferR[FFTSize];
+float FFTMagnitudeL[Kmax_FFT];
+float FFTPhaseL[Kmax_FFT];
+float FFTMagnitudeR[Kmax_FFT];
+float FFTPhaseR[Kmax_FFT];
+float LUT[FFTSize];
+float FFTFrequency[Kmax_FFT];
+float AFFTL[Kmax_FFT];
+float BFFTL[Kmax_FFT];
+float AFFTR[Kmax_FFT];
+float BFFTR[Kmax_FFT];
+int kFFT, jFFT, qFFT, iFFT;
+float new_valFFTL, old_valFFTL, diffFFTL,new_valFFTR, old_valFFTR, diffFFTR;
+///////////////////////////////////////////////////////////////////////////
+//  Synth Params - Global                                                //
+///////////////////////////////////////////////////////////////////////////
+bool Enabled_Synth=false;
+int notes[36]={19,20,21,22,24,25,27,28,30,32,33,35,37,40,42,45,47,50,53,56,59,63,67,71,75,79,84,89,94,100,106,112,118,125,132,139};
+const int Polyphony_Synth=9;
+float PlayedFreq_Synth[Polyphony_Synth];
+float PlayedMagn_Synth[Polyphony_Synth];
+//Sine_OSC oscGT[Polyphony_Synth];
+//char *note_names[36]={"A","B"};
+float note_freq[36]={};
+float Threshold_Synth=0.006;
+float LoThreshold_Synth=0.003;
+float LowOct_Synth=0.3;
+float HiOct_Synth=0.3;
+float MidOct_Synth=0.5;
+float VLOct_Synth=0.2;
+float SinMag_Synth=0.8;
+float SqrMag_Synth=0.05;
+float TriMag_Synth=0.5;
+float SawMag_Synth=0.05;
+float Dry_Synth=0.0;
+float Wet_Synth=0.9;
 ////////////////////////////////////////////////////////////////////////
 //  Noise Filter Params - Globals                                     //
 //       - an implementation of the moving average filter             //
@@ -65,6 +122,9 @@ bool asymmetrical_Dist = false;
 bool Enabled_Tr = false;
 float Depth_Tr = 0.3;
 float Period_Tr= 0.3; //sec
+float Stereo_Tr=0;
+//Sine_OSC TrOSC_L;
+//Sine_OSC TrOSC_R;
 ////////////////////////////////////////////////////////////////////////
 //  Delay      Params - Globals                                       //
 ////////////////////////////////////////////////////////////////////////
@@ -84,6 +144,8 @@ float Speed_Vib=3; //Hz [0.1-50] - but i think it works better in [0.2-20]
 float Wet_Vib=0.5; //[0-1]
 float Dry_Vib=0.5; //[0-1]
 float FeedBack_Vib=0; // [0-1]
+float Stereo_Vib=0.50;
+///Sine_OSC VibOSC;
 ////////////////////////////////////////////////////////////////////////
 //  Pitch Shifter  Params - Globals                                   //
 ////////////////////////////////////////////////////////////////////////
@@ -139,14 +201,16 @@ double env=0;
 bool Enabled_Ph=false;
 float Dry_Ph = 0.5; //%
 float Wet_Ph = 0.5; //%
-float SweepRate_Ph = 5; //Hz best in range [1-30]
+float SweepRate_Ph = 1.5; //Hz best in range [1-30]
 float SweepDepth_Ph = 5 ; //Octaves
 float FeedBack_Ph=0.4;
 float BaseFreq_Ph=500; //hz [1760-7018] !!!
 float OffsetFreq_Ph=7000;
+float Stereo_Ph=0;
 
 double lfoInc=0;
 double lfoPhase=0;
+double lfoPhaseR=0;
 double dmin=0;
 double dmax=0;
 
@@ -193,9 +257,11 @@ float Wet_Wah = 0.09; //%
 float SweepRate_Wah =5; //Hz best in range [0-30]
 float BaseFreq_Wah=500; //hz [1760-7018] !!!
 float OffsetFreq_Wah=7000;
-
+double _pi=3.14;///
 double Inc_Wah=0;
 double Phase_Wah=0;
+double Phase_Wah_R=_pi/2;
+double Stereo_Wah=0;
 double dmin_Wah=0;
 double dmax_Wah=0;
 double R_Wah=0.97;
@@ -316,6 +382,8 @@ float *Rv6_Buffer;
 float *RvFb1_Buffer;
 float *RvFb2_Buffer;
 float *RvFb3_Buffer;
+float RvWet=0.50;
+float RvDry=0.50;
 float d1_Rv=400;
 float d2_Rv=150;
 float d3_Rv=1000;
@@ -329,22 +397,87 @@ float dFb1=300;
 float dFb2=500;
 float dFb3=400;
 //Rotation angles
-float fi1=3.14159/3.3;
-float fi2=3.14159*1.8;
-float fi3=3.14159/0.9;
-float fi4=3.14159/9;
-float fi5=3.14159*1.1;
-float fi6=3.14159/1.9;
-float th3d=3.14159/9;
-float fi3d=3.14159*1.3;
-float ps3d=3.14159/1.6;
+float fi1=_pi/3.3;
+float cosfi1=0.999998644;
+float sinfi1=0.00164658;
+float fi2=_pi*1.8;
+float cosfi2=0.995133498;
+float sinfi2=0.098535891;
+float fi3=_pi/0.9;
+float cosfi3=0.998144739;
+float sinfi3=0.060885803;
+float fi4=_pi/9;
+float cosfi4=0.999981442;
+float sinfi4=0.006092311;
+float fi5=_pi*1.1;
+float cosfi5=0.99818164;
+float sinfi5=0.060277687;
+float fi6=_pi/1.9;
+float cosfi6=0.999583623;
+float sinfi6=0.028854487;
+float th3d=_pi/9;
+float costh3d=0.999981442;
+float sinth3d=0.006092311;
+float fi3d=_pi*1.3;
+float cosfi3d=0.997460622;
+float sinfi3d=0.07122013;
+float ps3d=_pi/1.6;
+float cosps3d=0.999981442;
+float sinps3d=0.006092311;
 ///////////////////////////////////////////////////////////////////////////
+//LP IIR 4th order - cutoff 1700Hz - used by FFT
+///////////////////////////////////////////////////////////////////////////
+double a0_FFT=0.000159709;
+double a1_FFT=0.000638836;
+double a2_FFT=0.000958254;
+double a3_FFT=0.000638836;
+double a4_FFT=0.000159709;
+double b1_FFT=-3.36781;
+double b2_FFT=4.29568;
+double b3_FFT=-2.45539;
+double b4_FFT=0.53007;
+double yL_FFT=0;
+double y1L_FFT=0;
+double y2L_FFT =0;
+double y3L_FFT =0;
+double y4L_FFT =0;
+double x1L_FFT =0;
+double x2L_FFT =0;
+double x3L_FFT =0;
+double x4L_FFT =0;
+double yR_FFT=0;
+double y1R_FFT=0;
+double y2R_FFT =0;
+double y3R_FFT =0;
+double y4R_FFT =0;
+double x1R_FFT =0;
+double x2R_FFT =0;
+double x3R_FFT =0;
+double x4R_FFT =0;
+///////////////////////////////////////////////////////////////////////////
+
+void Rotate2Df(float *y1, float *y2, float _x1,float _x2, float cosfi, float sinfi)
+{
+    float x1=_x1;
+    float x2=_x2;
+    *y1=cosfi*x1+sinfi*x2;
+    *y2=sinfi*x1-cosfi*x2;
+}
 void Rotate2D(float *y1, float *y2, float _x1,float _x2, float fi)
 {
     float x1=_x1;
     float x2=_x2;
     *y1=cos(fi)*x1+sin(fi)*x2;
     *y2=sin(fi)*x1-cos(fi)*x2;
+}
+void Rotate3Df(float *y1, float *y2,float *y3, float _x1,float _x2,float _x3, float costh, float sinth, float cosfi, float sinfi, float cosps, float sinps)
+{
+    float x1=_x1;
+    float x2=_x2;
+    float x3=_x3;
+    *y1=costh*cosps*x1+(-cosfi*sinps+sinfi*sinth*cosps)*x2+(sinfi*sinps+cosfi*sinth*cosps)*x3;
+    *y2=costh*sinps*x1+(cosfi*cosps+sinfi*sinth*sinps)*x2+(-sinfi*cosps+cosfi*sinth*sinps)*x3;
+    *y3=-sinth*x1+sinfi*costh*x2+cosfi*costh*x3;
 }
 void Rotate3D(float *y1, float *y2,float *y3, float _x1,float _x2,float _x3, float th, float fi, float ps)
 {
@@ -365,7 +498,8 @@ void Sample_Reverb(float *x_L, float *x_R)
 
     //Left Channel
     float x1=*x_L;
-    Rotate2D(&y1,&y2,x1,x1,fi1);
+    //Rotate2D(&y1,&y2,x1,x1,fi1);
+    Rotate2Df(&y1,&y2,x1,x1,cosfi1, sinfi1);
     //first delay line
     //store one output in the delay line
     Rv1_Buffer[(SN%size)*2]=y2;
@@ -375,7 +509,8 @@ void Sample_Reverb(float *x_L, float *x_R)
     if (dt<0) bp+=size;
     if (dt>=size) bp-=size;
     y2=Rv1_Buffer[bp*2];
-    Rotate2D(&x1,&x2,y1,y2,fi2);
+    //Rotate2D(&x1,&x2,y1,y2,fi2);
+    Rotate2Df(&x1,&x2,y1,y2,cosfi2, sinfi2);
     //second delay line
     //store one output in the delay line
     Rv2_Buffer[(SN%size)*2]=x2;
@@ -385,7 +520,8 @@ void Sample_Reverb(float *x_L, float *x_R)
     if (dt<0) bp+=size;
     if (dt>=size) bp-=size;
     x2=Rv2_Buffer[bp*2];
-    Rotate2D(&y1,&y2,x1,x2,fi3);
+    //Rotate2D(&y1,&y2,x1,x2,fi3);
+    Rotate2Df(&y1,&y2,x1,x2,cosfi3,sinfi3);
     //third delay line
     //store one output in the delay line
     Rv3_Buffer[(SN%size)*2]=y2;
@@ -395,7 +531,8 @@ void Sample_Reverb(float *x_L, float *x_R)
     if (dt<0) bp+=size;
     if (dt>=size) bp-=size;
     y2=Rv3_Buffer[bp*2];
-    Rotate2D(&x1,&x2,y1,y2,fi4);
+    //Rotate2D(&x1,&x2,y1,y2,fi4);
+    Rotate2Df(&x1,&x2,y1,y2,cosfi4,sinfi4);
     //fourth delay line
     //store one output in the delay line
     Rv4_Buffer[(SN%size)*2]=x2;
@@ -405,7 +542,8 @@ void Sample_Reverb(float *x_L, float *x_R)
     if (dt<0) bp+=size;
     if (dt>=size) bp-=size;
     x2=Rv4_Buffer[bp*2];
-    Rotate2D(&y1,&y2,x1,x2,fi5);
+    //Rotate2D(&y1,&y2,x1,x2,fi5);
+    Rotate2Df(&y1,&y2,x1,x2,cosfi5, sinfi5);
     //fifth delay line
     //store one output in the delay line
     Rv5_Buffer[(SN%size)*2]=y2;
@@ -415,7 +553,8 @@ void Sample_Reverb(float *x_L, float *x_R)
     if (dt<0) bp+=size;
     if (dt>=size) bp-=size;
     y2=Rv5_Buffer[bp*2];
-    Rotate2D(&x1,&x2,y1,y2,fi6);
+    //Rotate2D(&x1,&x2,y1,y2,fi6);
+    Rotate2Df(&x1,&x2,y1,y2,cosfi6, sinfi6);
     //fourth delay line
     //store one output in the delay line
     Rv6_Buffer[(SN%size)*2]=x2;
@@ -444,7 +583,8 @@ void Sample_Reverb(float *x_L, float *x_R)
     y3=RvFb3_Buffer[bp*2];
 
     //Rotate the feedback
-    Rotate3D(&y1,&y2,&y3,y1,y2,y3,th3d,fi3d,ps3d);
+    //Rotate3D(&y1,&y2,&y3,y1,y2,y3,th3d,fi3d,ps3d);
+    Rotate3Df(&y1,&y2,&y3,y1,y2,y3,costh3d,sinth3d,cosfi3d,sinfi3d,cosps3d,sinps3d);
     y1=g1*y1+x2;
     y2=g2*y2+x1;
     y3*=g3;
@@ -453,11 +593,12 @@ void Sample_Reverb(float *x_L, float *x_R)
     RvFb2_Buffer[(SN%size)*2]=y2;
     RvFb3_Buffer[(SN%size)*2]=y3;
     //Get the output
-    *x_L= (y1+y2)/2;
+    *x_L= (*x_L)*RvDry + RvWet*(y1+y2)/2;
 
     //Right Channel
     x1=*x_R;
-    Rotate2D(&y1,&y2,x1,x1,fi1);
+    //Rotate2D(&y1,&y2,x1,x1,fi1);
+    Rotate2Df(&y1,&y2,x1,x1,cosfi1, sinfi1);
     //first delay line
     //store one output in the delay line
     Rv1_Buffer[(SN%size)*2+1]=y2;
@@ -467,7 +608,8 @@ void Sample_Reverb(float *x_L, float *x_R)
     if (dt<0) bp+=size;
     if (dt>=size) bp-=size;
     y2=Rv1_Buffer[bp*2+1];
-    Rotate2D(&x1,&x2,y1,y2,fi2);
+    //Rotate2D(&x1,&x2,y1,y2,fi2);
+    Rotate2Df(&x1,&x2,y1,y2,cosfi2, sinfi2);
     //second delay line
     //store one output in the delay line
     Rv2_Buffer[(SN%size)*2+1]=x2;
@@ -477,7 +619,8 @@ void Sample_Reverb(float *x_L, float *x_R)
     if (dt<0) bp+=size;
     if (dt>=size) bp-=size;
     x2=Rv2_Buffer[bp*2+1];
-    Rotate2D(&y1,&y2,x1,x2,fi3);
+    //Rotate2D(&y1,&y2,x1,x2,fi3);
+    Rotate2Df(&y1,&y2,x1,x2,cosfi3, sinfi3);
     //third delay line
     //store one output in the delay line
     Rv3_Buffer[(SN%size)*2+1]=y2;
@@ -487,7 +630,8 @@ void Sample_Reverb(float *x_L, float *x_R)
     if (dt<0) bp+=size;
     if (dt>=size) bp-=size;
     y2=Rv3_Buffer[bp*2+1];
-    Rotate2D(&x1,&x2,y1,y2,fi4);
+    //Rotate2D(&x1,&x2,y1,y2,fi4);
+    Rotate2Df(&x1,&x2,y1,y2,cosfi4, sinfi4);
     //fourth delay line
     //store one output in the delay line
     Rv4_Buffer[(SN%size)*2+1]=x2;
@@ -497,7 +641,8 @@ void Sample_Reverb(float *x_L, float *x_R)
     if (dt<0) bp+=size;
     if (dt>=size) bp-=size;
     x2=Rv4_Buffer[bp*2+1];
-    Rotate2D(&y1,&y2,x1,x2,fi5);
+    //Rotate2D(&y1,&y2,x1,x2,fi5);
+    Rotate2Df(&y1,&y2,x1,x2,cosfi5, sinfi5);
     //fifth delay line
     //store one output in the delay line
     Rv5_Buffer[(SN%size)*2+1]=y2;
@@ -507,7 +652,8 @@ void Sample_Reverb(float *x_L, float *x_R)
     if (dt<0) bp+=size;
     if (dt>=size) bp-=size;
     y2=Rv5_Buffer[bp*2+1];
-    Rotate2D(&x1,&x2,y1,y2,fi6);
+    //Rotate2D(&x1,&x2,y1,y2,fi6);
+    Rotate2Df(&x1,&x2,y1,y2,cosfi6, sinfi6);
     //fourth delay line
     //store one output in the delay line
     Rv6_Buffer[(SN%size)*2+1]=x2;
@@ -536,7 +682,8 @@ void Sample_Reverb(float *x_L, float *x_R)
     y3=RvFb3_Buffer[bp*2+1];
 
     //Rotate the feedback
-    Rotate3D(&y1,&y2,&y3,y1,y2,y3,th3d,fi3d,ps3d);
+    //Rotate3D(&y1,&y2,&y3,y1,y2,y3,th3d,fi3d,ps3d);
+    Rotate3Df(&y1,&y2,&y3,y1,y2,y3,costh3d,sinth3d,cosfi3d,sinfi3d,cosps3d,sinps3d);
     y1=g1*y1+x2;
     y2=g2*y2+x1;
     y3*=g3;
@@ -547,7 +694,7 @@ void Sample_Reverb(float *x_L, float *x_R)
     RvFb3_Buffer[(SN%size)*2+1]=y3;
 
     //Get the output
-    *x_R= (y1+y2)/2;
+    *x_R= (*x_R)*RvDry+RvWet*(y1+y2)/2;
 }
 
 float cubic_interpolate( float y0, float y1, float y2, float y3, float mu ) {
@@ -563,8 +710,6 @@ float cubic_interpolate( float y0, float y1, float y2, float y3, float mu ) {
    return ( a0*mu*mu2 + a1*mu2 + a2*mu + a3 );
 }
 
-// We may need to use unsigned short - i dont know yet , got to test it...
-//... seems like we're ok fon now with short values :)
 float Sample_addGain(float value, float GainFactor,float MaxGain)
 {
     GainFactor =(GainFactor<MaxGain)?GainFactor:MaxGain;
@@ -580,7 +725,6 @@ double Sample_LP(float value)
     x1_LP=x;
     y2_LP=y1_LP;
     y1_LP=y_LP;
-    // Calculate wet and dry contributions
     return y_LP;
 }
 double Sample_BP1(float value)
@@ -678,11 +822,14 @@ void Sample_Wah(float *value_L, float *value_R)
     //calculate the Coifficient from frequency
     // sinusoid
     double theta = dmin_Wah + (dmax_Wah-dmin_Wah)* ((sin(Phase_Wah)+1)/2);
-    //double theta = 3.14159/8;
+    double thetaR = dmin_Wah + (dmax_Wah-dmin_Wah)* ((sin(Phase_Wah_R)+1)/2);
+    //double theta = _pi/8;
     // sawtooth - does nt work well though - sounds like repeating piano hits :)
-    //double theta = (Phase_Wah/(2*3.14159))*(dmax_Wah-dmin_Wah);
+    //double theta = (Phase_Wah/(2*_pi))*(dmax_Wah-dmin_Wah);
     Phase_Wah+=Inc_Wah;
-    if( Phase_Wah >= 3.14159 * 2.f ) Phase_Wah -= 3.14159 * 2.f;
+    if( Phase_Wah >= _pi * 2.f ) Phase_Wah -= _pi * 2.f;
+    Phase_Wah_R=Phase_Wah+Stereo_Wah;
+    if( Phase_Wah_R >= _pi * 2.f ) Phase_Wah_R -= _pi * 2.f;
     double xL = (*value_L);
     double xR = (*value_R);
 
@@ -703,7 +850,7 @@ void Sample_Wah(float *value_L, float *value_R)
     //xR=xR*(1-FeedBack_Wah)+FeedBack_Wah*yR_wah;//add the feedback
     // Calculate difference equation
     //if (RunCount_Wah>2)
-        yR_wah=xR-x2R_wah+2*R_Wah*cos(theta)*y1R_wah-R_Wah*R_Wah*y2R_wah;
+        yR_wah=xR-x2R_wah+2*R_Wah*cos(thetaR)*y1R_wah-R_Wah*R_Wah*y2R_wah;
     x2R_wah=x1R_wah;
     x1R_wah=xR;
     y2R_wah=y1R_wah;
@@ -715,10 +862,14 @@ void Sample_Phaser(float *value_L, float *value_R)
 {
     //calculate the Coifficient from frequency
     double d = dmin + (dmax-dmin)* ((sin(lfoPhase)+1)/2);
+    double dR = dmin + (dmax-dmin)* ((sin(lfoPhaseR)+1)/2);
     lfoPhase+=lfoInc;
-    if( lfoPhase >= 3.14159 * 2.f ) lfoPhase -= 3.14159 * 2.f;
+    lfoPhaseR=lfoPhase+Stereo_Ph;
+    if( lfoPhase >= _pi * 2.f ) lfoPhase -= _pi * 2.f;
+    if( lfoPhaseR >= _pi * 2.f ) lfoPhaseR -= _pi * 2.f;
 
     double C =- (1.0 - d) / (1.0 + d);
+    double CR =- (1.0 - dR) / (1.0 + dR);
     //double C =- (1.0 - wp) / (1.0 + wp);
     double xL = (*value_L);
     double xR = (*value_R);
@@ -742,13 +893,13 @@ void Sample_Phaser(float *value_L, float *value_R)
     //Right Channel
     xR=xR*(1-FeedBack_Ph)+FeedBack_Ph*y4R_ph;//add the feedback
     // Calculate difference equation
-    y1R_ph=C*(xR-y1R_ph)+x1R_ph;//1st all pass
+    y1R_ph=CR*(xR-y1R_ph)+x1R_ph;//1st all pass
     x1R_ph=xR;
-    y2R_ph=C*(y1R_ph-y2R_ph)+x2R_ph;//2nd all pass
+    y2R_ph=CR*(y1R_ph-y2R_ph)+x2R_ph;//2nd all pass
     x2R_ph=y1R_ph;
-    y3R_ph=C*(y2R_ph-y3R_ph)+x3R_ph;//2nd all pass
+    y3R_ph=CR*(y2R_ph-y3R_ph)+x3R_ph;//2nd all pass
     x3R_ph=y2R_ph;
-    y4R_ph=C*(y3R_ph-y4R_ph)+x4R_ph;//2nd all pass
+    y4R_ph=CR*(y3R_ph-y4R_ph)+x4R_ph;//2nd all pass
     x4R_ph=y3R_ph;
     // Calculate wet and dry contributions
     *value_R= Dry_Ph* (*value_R)+ Wet_Ph*y4R_ph;
@@ -809,12 +960,14 @@ void Sample_Comp(float *value_L, float *value_R, int CPoints)
     // here be aware of pIV denormal numbers glitch
     env = (1.0 - theta) * rms + theta * env;
 
+    float coef=2000;
+    if (useJack) coef = 0.1;
 
     //The Gate
     double  Ggain = 1.0;
-    if (env < GateThresh_Comp*2000)
+    if (env < GateThresh_Comp*coef)
     {
-        Ggain = Ggain - GateFactor_Comp*(GateThresh_Comp*2000 - env) / (GateThresh_Comp*2000);
+        Ggain = Ggain - GateFactor_Comp*(GateThresh_Comp*coef - env) / (GateThresh_Comp*coef);
         // result - two hard kneed gated channels...
         *value_L= (*value_L) * Ggain;
         *value_R= (*value_R) * Ggain;
@@ -823,9 +976,9 @@ void Sample_Comp(float *value_L, float *value_R, int CPoints)
 
     //The Compressor (maybe it is called expander...)
     double  Cgain = 1.0;
-    if (env < LimiterThresh_Comp*2000)
+    if (env < LimiterThresh_Comp*coef)
     {
-        Cgain = Cgain +  Compression_Comp*(LimiterThresh_Comp*2000 - env) /(LimiterThresh_Comp*2000);
+        Cgain = Cgain +  Compression_Comp*(LimiterThresh_Comp*coef- env) /(LimiterThresh_Comp*coef);
         // result - two hard kneed compressed channels...
         *value_L= (*value_L) * Cgain;
         *value_R= (*value_R) * Cgain;
@@ -835,10 +988,10 @@ void Sample_Comp(float *value_L, float *value_R, int CPoints)
 
     //The limiter
     double  Lgain = 1.0;
-    if (env > LimiterThresh_Comp*2000)
+    if (env > LimiterThresh_Comp*coef)
     {
 
-        Lgain = Lgain - LimiterFactor_Comp*(env - LimiterThresh_Comp*2000) / (env);
+        Lgain = Lgain - LimiterFactor_Comp*(env - LimiterThresh_Comp*coef) / (env);
         // result - two hard kneed limited channels...
         *value_L= (*value_L) * Lgain;
         *value_R= (*value_R) * Lgain;
@@ -963,11 +1116,13 @@ float Sample_Clip2(float value,float GainFactor,float MaxGain, float Threshold, 
     }
     return value;
 }
-float Sample_Tremolo(float value,float period, float depth)
+void Sample_Tremolo(float *L,float *R, float period, float depth)
 {
-    //monosample= 32000*sin(3.14159/22050*(i+phase)*freq);
-    float val = value * (1-depth*sin(2*3.14159*SN/(SamplingRate*period)));
-    return val;
+    //monosample= 32000*sin(_pi/22050*(i+phase)*freq);
+    *L = *L * (1-depth*sin(2*_pi*SN/(SamplingRate*period)));
+    *R = *R * (1-depth*sin(2*_pi*SN/(SamplingRate*period)+Stereo_Tr));
+    ///*L = *L * (1-depth*TrOSC_L.newSample(1/period,SamplingRate));
+    ///*R = *R * (1-depth*TrOSC_R.newSample((1/period)+Stereo_Tr, SamplingRate));
 }
 void Sample_Delay(float *value_L, float *value_R,float Dtime, float FeedBack, float Mix)
 {
@@ -999,13 +1154,14 @@ void Sample_Vibrato(float *value_L, float *value_R,float Depth, float Speed, flo
     double sr = SamplingRate;
     double sn=(double)SN;
     double Dtime0 = (double) (Min_Delay/sr);
-    double Dtime = Dtime0 + Depth - Depth * sin(Speed * sn * 2.0d * 3.14159d/ sr);
+    double Dtime = Dtime0 + Depth - Depth * sin(Speed * sn * 2.0d * _pi/ sr);
+    //double Dtime = Dtime0 + Depth - Depth * VibOSC.newSample(Speed,SamplingRate);
 
     long size=5*SamplingRate;// our 5 seconds Delay Buffer of 2 channels
     long CurrentBufPointer=(SN%size);
     double DSamples = Dtime*sr;
     long dsi=DSamples;
-    //double DSamples = 10 + 22.05 - 22.05 * sin(Speed*sn*2.0d*3.14159/sr);
+    //double DSamples = 10 + 22.05 - 22.05 * sin(Speed*sn*2.0d*_pi/sr);
     long DelayBufPointer = (CurrentBufPointer-dsi);
     if (DelayBufPointer>=size) DelayBufPointer-=size;
     if (DelayBufPointer<0) DelayBufPointer+=size;
@@ -1060,7 +1216,7 @@ void Sample_Chorus(float *value_L, float *value_R,float Depth, float Speed, floa
     {
         if  (SN%lperiod<lperiod/rounding)
         {
-            DelaySamples = Min_Delay + factor * ((SN%lperiod)-(lperiod/rounding)) + Depth/5*sin((3.14159/2)*(SN%lperiod)/lperiod) ;
+            DelaySamples = Min_Delay + factor * ((SN%lperiod)-(lperiod/rounding)) + Depth/5*sin((_pi/2)*(SN%lperiod)/lperiod) ;
         }
         else
         {
@@ -1071,7 +1227,7 @@ void Sample_Chorus(float *value_L, float *value_R,float Depth, float Speed, floa
     {
         if  (SN%lperiod>lperiod-lperiod/rounding)
         {
-            DelaySamples = Depth - factor * ((SN%lperiod)-(lperiod/rounding)) - Depth/5*cos((3.14159/2)*(SN%lperiod)/lperiod) ;
+            DelaySamples = Depth - factor * ((SN%lperiod)-(lperiod/rounding)) - Depth/5*cos((_pi/2)*(SN%lperiod)/lperiod) ;
         }
         else
         {
@@ -1100,8 +1256,8 @@ void Sample_Chorus(float *value_L, float *value_R,float Depth, float Speed, floa
     float DB_value_L=Chorus_Buffer[DelayBufPointer*2] + (Chorus_Buffer[DelayBufPointer*2+2]-Chorus_Buffer[DelayBufPointer*2])*med;
     float DB_value_R=Chorus_Buffer[DelayBufPointer*2+1] + (Chorus_Buffer[DelayBufPointer*2+1+2]-Chorus_Buffer[DelayBufPointer*2+1])*med;
 
-    //float DB_value_L= (sin(2*3.14159*(SN%lperiod)/lperiod))*Chorus_Buffer[DelayBufPointer*2]+(sin((2*3.14159*(SN%lperiod)/lperiod)))*Chorus_Buffer[DelayBufPointer2*2];
-    //float DB_value_R= (sin(2*3.14159*(SN%lperiod)/lperiod))*Chorus_Buffer[DelayBufPointer*2+1]+(sin((2*3.14159*(SN%lperiod)/lperiod)))*Chorus_Buffer[DelayBufPointer2*2+1];
+    //float DB_value_L= (sin(2*_pi*(SN%lperiod)/lperiod))*Chorus_Buffer[DelayBufPointer*2]+(sin((2*_pi*(SN%lperiod)/lperiod)))*Chorus_Buffer[DelayBufPointer2*2];
+    //float DB_value_R= (sin(2*_pi*(SN%lperiod)/lperiod))*Chorus_Buffer[DelayBufPointer*2+1]+(sin((2*_pi*(SN%lperiod)/lperiod)))*Chorus_Buffer[DelayBufPointer2*2+1];
     //float DB_value_L= Chorus_Buffer[DelayBufPointer*2];
     //float DB_value_R= Chorus_Buffer[DelayBufPointer*2+1];
 
@@ -1152,8 +1308,8 @@ void Sample_Shifter(float *value_L, float *value_R,float Shift, float MaxD, floa
     if (DelayBufPointer2<0) DelayBufPointer2+=lMaxD;
 
     // 1.Retrieve Samples from the Delay_Buffer and apply sine envelop
-    float DB_value_L= (sin(2*3.14159*(SN%(lMaxD))/(lMaxD*2)))*Shifter_Buffer[DelayBufPointer*2] ;
-    float DB_value_R= (sin(2*3.14159*(SN%(lMaxD))/(lMaxD*2)))*Shifter_Buffer[DelayBufPointer*2+1];
+    float DB_value_L= (sin(2*_pi*(SN%(lMaxD))/(lMaxD*2)))*Shifter_Buffer[DelayBufPointer*2] ;
+    float DB_value_R= (sin(2*_pi*(SN%(lMaxD))/(lMaxD*2)))*Shifter_Buffer[DelayBufPointer*2+1];
     // store the values to the second buffer
     Shifter_B2[CurrentBufPointer*2]=DB_value_L;
     Shifter_B2[CurrentBufPointer*2+1]=DB_value_R;
@@ -1170,6 +1326,322 @@ void Sample_Shifter(float *value_L, float *value_R,float Shift, float MaxD, floa
     *value_L=Wet*DB_value_L+Dry*(*value_L);
     *value_R=Wet*DB_value_R+Dry*(*value_R);
 }
+
+float square(float f)
+{
+    long samplePeriod=SamplingRate/f;
+    if ((SN%samplePeriod)>(samplePeriod/2)) return 1;
+    else return -1;
+}
+float triangle(float f)
+{
+    long samplePeriod=SamplingRate/f;
+    float t=(SN%samplePeriod);
+    if (t>(samplePeriod/2))
+    {
+        float v=-1+2*t/samplePeriod;
+        return v;
+    }
+    else
+    {
+        float v=1-2*t/samplePeriod;
+        return v;
+    }
+}
+float sawtooth(float f)
+{
+    long samplePeriod=SamplingRate/f;
+    float t=(SN%samplePeriod);
+    float v=-1+2*t/samplePeriod;
+    return v;
+}
+void initFFT()
+{
+    float sr = SamplingRate;
+    for (int i=0;i<N_FFT;i++)
+    {
+        //create the lookup table for the RtFT
+        LUT[i]=sin(i*2*_pi/N_FFT)/N_FFT;
+        FFTBufferL[i]=0;
+        FFTBufferR[i]=0;
+    }
+    for (int i=0;i<Kmax_FFT;i++)
+    {
+        AFFTL[i]=0;
+        BFFTL[i]=0;
+        AFFTR[i]=0;
+        BFFTR[i]=0;
+        FFTFrequency[i]=(float)i*sr/(float)N_FFT;
+    }
+    iFFT=0;
+}
+void Sample_RtFT(float L, float R)
+{// Real-time Fourier Transform
+    // for economy we FFT only the Left Chanel
+
+    new_valFFTL=L;
+    //new_valFFTR=R;
+    old_valFFTL=FFTBufferL[iFFT];
+    //old_valFFTR=FFTBufferR[iFFT];
+    FFTBufferL[iFFT]=new_valFFTL;
+    //FFTBufferR[iFFT]=new_valFFTR;
+    diffFFTL=new_valFFTL-old_valFFTL;
+    //diffFFTR=new_valFFTR-old_valFFTR;
+    AFFTL[0]+=diffFFTL*LUT[CosOffset_FFT];
+    //AFFTR[0]+=diffFFTR*LUT[CosOffset_FFT];
+    for (kFFT=1;kFFT<Kmax_FFT;kFFT++)
+    {
+        jFFT=(kFFT*iFFT)%N_FFT;
+        qFFT=(jFFT+CosOffset_FFT)%N_FFT;
+        AFFTL[kFFT]+=diffFFTL*LUT[qFFT];
+        //AFFTR[kFFT]+=diffFFTR*LUT[qFFT];
+        BFFTL[kFFT]+=diffFFTL*LUT[jFFT];
+        //BFFTR[kFFT]+=diffFFTR*LUT[jFFT];
+    }
+    iFFT++;
+    if (iFFT>=N_FFT) iFFT=0;
+}
+void Sample_LPFSynth(float *value_L, float *value_R)
+{
+    double xL = (*value_L);
+    // Calculate difference equation
+    yL_FFT= (a0_FFT*xL)+ (a1_FFT*x1L_FFT)+ (a2_FFT*x2L_FFT)+ (a3_FFT*x3L_FFT)+ (a4_FFT*x4L_FFT)
+           -(b1_FFT*y1L_FFT)- (b2_FFT*y2L_FFT)- (b3_FFT*y3L_FFT)- (b4_FFT*y4L_FFT);
+    x4L_FFT=x3L_FFT;
+    x3L_FFT=x2L_FFT;
+    x2L_FFT=x1L_FFT;
+    x1L_FFT=xL;
+    y4L_FFT=y3L_FFT;
+    y3L_FFT=y2L_FFT;
+    y2L_FFT=y1L_FFT;
+    y1L_FFT=yL_FFT;
+    *value_L = yL_FFT;
+    *value_R = yL_FFT;
+    // for economy we FFT only the Left Chanel
+}
+void Sample_Envelope(float *value_L, float *value_R)
+{}
+void Sample_Synthesize(float *value_L, float *value_R)
+{
+    float sr=SamplingRate;
+    float outS=0;
+    float LPcoef=1;
+    int protectionCount=0;
+    for (int i=0; i<Kmax_FFT;i++)
+    //for (int j=0; j<36;j++)
+    {//look in the notes table... to quantize at notes' pitch so we dont have to look throught the entire frequency range.
+        //int i=notes[j];
+        float magn=LPcoef*sqrt(AFFTL[i]*AFFTL[i]+BFFTL[i]*BFFTL[i]);
+        if (magn>Threshold_Synth)
+        {
+            protectionCount++;
+            outS+=  0.2*SinMag_Synth* (magn-Threshold_Synth)*50* sin(2*_pi*FFTFrequency[i]*SN/sr) +
+            /* 0.2*LowOct_Synth*  magn*100* sin(_pi*FFTFrequency[i]*SN/sr) +
+            0.2*HiOct_Synth*  magn*100* sin(4*_pi*FFTFrequency[i]*SN/sr) + 0.2*VLOct_Synth*  magn*100* sin(0.5*_pi*FFTFrequency[i]*SN/sr) +*/
+                    0.2*SqrMag_Synth*  (magn-Threshold_Synth)*50* square(FFTFrequency[i]) +
+                    0.2*TriMag_Synth*MidOct_Synth*  (magn-Threshold_Synth)*50* triangle(FFTFrequency[i]) +
+                    0.2*TriMag_Synth*LowOct_Synth*  (magn-Threshold_Synth)*50* triangle(FFTFrequency[i]/2) +
+                    0.2*TriMag_Synth*HiOct_Synth*  (magn-Threshold_Synth)*50* triangle(FFTFrequency[i]*2) +
+                    0.2*SawMag_Synth*  (magn-Threshold_Synth)*50* sawtooth(FFTFrequency[i]);
+            CurrentFreq=FFTFrequency[i];            
+        }
+        if (protectionCount>9) break;
+        //if (i>20) LPcoef+=i/50;
+    }
+    *value_L=Dry_Synth*(*value_L) + Wet_Synth*(outS);
+    *value_R=Dry_Synth*(*value_R) + Wet_Synth*(outS);
+}
+void Sample_Synthesize2(float *value_L, float *value_R)
+{
+    float sr=SamplingRate;
+    float outS=0;
+    int protectionCount=0;
+    int k=0;
+    if ((SN%100)==0)
+    {// we "hear" the FFT results every 400 samples to find the frequencies played
+        CurrentFreq=0;
+        for (int i=15; i<Kmax_FFT;i++)
+        {
+            float magn=sqrt(AFFTL[i]*AFFTL[i]+BFFTL[i]*BFFTL[i]);
+            if (magn>Threshold_Synth)
+            {
+                protectionCount++;
+                PlayedFreq_Synth[k]=FFTFrequency[i];
+                PlayedMagn_Synth[k++]=magn;
+                if (protectionCount==1) CurrentFreq=FFTFrequency[i];
+            }
+            if (protectionCount>Polyphony_Synth) break;
+        }
+        for(int i=k;i<Polyphony_Synth;i++)
+        {
+            PlayedFreq_Synth[i]=0;
+        }
+    }
+    for (int i=0;i<Polyphony_Synth;i++)
+    {
+        if (PlayedFreq_Synth[i]==0) break;
+        float magn=PlayedMagn_Synth[i];
+        outS+=
+                0.2*SinMag_Synth* (magn-Threshold_Synth)*50* sin(2*_pi*PlayedFreq_Synth[i]*SN/sr) +
+                //0.2*SinMag_Synth* (magn-Threshold_Synth)*50* oscGT[i].newSample(PlayedFreq_Synth[i]) +
+                0.2*SqrMag_Synth*  (magn-Threshold_Synth)*50* square(PlayedFreq_Synth[i]) +
+                0.2*TriMag_Synth*MidOct_Synth*  (magn-Threshold_Synth)*50* triangle(PlayedFreq_Synth[i]) +
+                0.2*TriMag_Synth*LowOct_Synth*  (magn-Threshold_Synth)*50* triangle(PlayedFreq_Synth[i]/2) +
+                0.2*TriMag_Synth*HiOct_Synth*  (magn-Threshold_Synth)*50* triangle(PlayedFreq_Synth[i]*2) +
+                0.2*SawMag_Synth*  (magn-Threshold_Synth)*50* sawtooth(PlayedFreq_Synth[i]);
+    }
+
+    *value_L=Dry_Synth*(*value_L) + Wet_Synth*(outS);
+    *value_R=Dry_Synth*(*value_R) + Wet_Synth*(outS);
+}
+void Sample_Synth(float *value_L, float *value_R)
+{
+    float sr=SamplingRate;
+    float outSL=0;
+    float L=*value_L;
+    float R=*value_R;
+    float L1=*value_L;
+    float R1=*value_R;
+
+    //0. LP Filter - cutoff at 1300Hz
+    //- it doesnt really improve anything so we disable it for economy
+    //Sample_LPFSynth(&L,&R);
+    //1. FFT on the input Buffer
+    Sample_RtFT(L,R);
+    //3. Synthesize
+    Sample_Synthesize2(value_L,value_R);
+    //4. Read or Create envelope and apply it -TODO...
+
+    //5. output
+    //*value_L=L1;
+    //*value_R=R1;
+}
+
+float envelop(long t, int i)
+{
+//    float t1= (float) t;
+//    float ms=(float)t * 1000 /((float)SamplingRate);
+//    float Att=(SamplingRate/1000)*MIDIAttack;
+//    float Sus=(SamplingRate/1000)*MIDISustain;
+//    float Dec=(SamplingRate/1000)*MIDIDecay;
+//    float Rel=(SamplingRate/1000)*MIDIRelease;
+
+//    if ((MIDIDecay>0)&&(t1>=Att+Sus+Dec-(Dec/5))&&(MIDIDecay!=0)&&(MIDIVelosities[i]>0))
+//    {
+//        MIDIVelosities[i]=-MIDIVelosities[i];
+//        MIDITimes[i]=0;
+//        return MIDIDecayInit[i];
+//    }
+//    if ((MIDIDecay==0)&&(MIDISustain==0)&&(t1>=Att)&&(MIDIVelosities[i]>0))
+//    {
+//        MIDIVelosities[i]=-MIDIVelosities[i];
+//        MIDITimes[i]=0;
+//        return MIDIDecayInit[i];
+//    }
+//    if ((MIDIVelosities[i]<0))
+//    {
+//        if (t1>Rel)
+//        {
+//            MIDIVelosities[i]=0;
+//            MIDITimes[i]=0;
+//            MIDIDecayInit[i]=0;
+//            MIDIReleaseInit[i]==0;
+//            return 0;
+//        }
+//        //Release
+//        //if (MIDIVelosities[i]>0) MIDIVelosities[i]=-MIDIVelosities[i];
+//        float y0=MIDIDecayInit[i];
+//        float f=((y0-(t1*y0)/Rel)/(t1/(Rel)+1));
+//        MIDIReleaseInit[i]=f;
+//        return f;
+//    }
+//    if (t1<=Att)//attack
+//    {
+//        if (MIDIReleaseInit[i]>0)
+//        {
+//            float y=MIDIReleaseInit[i];
+//            //t1=Att*(1+sqrt(1-pow(y,2)));
+//            //MIDITimes[i]=(long)t1;
+//            float f=((1-y)/pow(Att,2))*pow(t1,2)+y;
+//            MIDIDecayInit[i]=f;
+//            return f;
+//        }
+//        //float f=(t1/(t1+(Att*2)));
+//        float f=sqrt(1-(pow(t1-Att,2)/pow(Att,2)));
+//        MIDIDecayInit[i]=f;
+//        //MIDIReleaseInit[i]=f;
+//        return f;
+//    }
+//    if (t1<=Att+Sus)//Sustain
+//    {
+//        MIDIDecayInit[i]=1;
+//        return 1;
+//    }
+//    if ((MIDIDecay==0)&&(MIDISustain>0))
+//    {
+//        MIDIDecayInit[i]=1;//Sustain until note off
+//        return 1;
+//    }
+//    if (t1<=Att+Sus+Dec-(Dec/5))//Decay
+//    {
+//        t1-=(Att+Sus);
+//        float f=sqrt(1-((pow(t1,2)/(pow(Dec,2)))));
+//        MIDIDecayInit[i]=f;
+//        return f;
+//    }
+}
+void MIDI_Synth(float *value_L, float *value_R)
+{
+//    int voiceCount=0;
+//    float sr=SamplingRate;
+//    float outS=0;
+//    for (int i=0;i<128;i++)
+//    {
+//        if (MIDIVelosities[i]!=0)
+//        {
+//            //Pitch Bender - OK!
+//            //if (CurrentPitchValue<PitchWheelValue) CurrentPitchValue+=0.002;
+//            //if (CurrentPitchValue>PitchWheelValue) CurrentPitchValue-=0.002;
+//            float pw = (float) PitchWheelValue; //CurrentPitchValue;
+//            float pitchB=((pw-64)/64)*PitchBenderRange;
+//            float fr=MIDIFrequencies[i]*pow(2,pitchB/12);
+//            //harmonics
+//            float hf1=2*fr;
+//            float hf2=3*fr;
+//            float hf3=5*fr;
+//            //float fr=MIDIFrequencies[i];
+//            float v1=(float) MIDIVelosities[i];
+//            float magn=abs(v1)/127.0f;
+//            float newnote=0;
+//            if (SqrMag_MIDISynth>0) newnote+= SqrMag_MIDISynth*  (magn)* square(fr);
+//            if (TriMag_MIDISynth>0) newnote+=  TriMag_MIDISynth*MidOct_MIDISynth*  (magn)* triangle(fr);
+//            if (LowOct_MIDISynth>0) newnote+=  TriMag_MIDISynth*LowOct_MIDISynth*  (magn)* triangle(fr/2);
+//            if (HiOct_MIDISynth>0) newnote+= TriMag_MIDISynth*HiOct_MIDISynth*  (magn)* triangle(fr*2);
+//            if (SawMag_MIDISynth>0) newnote+= SawMag_MIDISynth*  (magn)* sawtooth(fr);
+//            //sines
+//            if (SinMag_MIDISynth>0) newnote+=SinMag_MIDISynth* (magn)* osc[i].newSample(fr,SamplingRate);
+//            if (HarmB_MIDISynth>0) newnote+=HarmB_MIDISynth* (magn)* osc1[i].newSample(fr/2,SamplingRate);
+//            if (Harm1_MIDISynth>0) newnote+=Harm1_MIDISynth* (magn)* osc2[i].newSample(hf1,SamplingRate);
+//            if (Harm2_MIDISynth>0) newnote+=Harm2_MIDISynth* (magn)* osc3[i].newSample(hf2,SamplingRate);
+//            if (Harm3_MIDISynth>0) newnote+=Harm3_MIDISynth* (magn)* osc4[i].newSample(hf3,SamplingRate);
+
+//            //outS+=envelop(MIDITimes[i],i)*newnote;//apply envelop
+//            float e=MIDIenv[i].newValue();
+//            outS+=newnote*e;//apply envelop
+//            if ((MIDIenv[i].state==ENV_STATE_IDLE)&&(e==0))
+//            {
+//                //the note finished
+//                MIDIVelosities[i]=0;
+//            }
+//            MIDITimes[i]+=1;//advance time for played note
+//            voiceCount++;
+//        }
+//    }
+//    float v= (float) VolumeValue;
+//    *value_L=(*value_L) + (v/127.0f)*(outS);
+//    *value_R=(*value_R) + (v/127.0f)*(outS);
+}
+
 
 void Sample_Volume(float *L, float *R, long vol)
 {
@@ -1211,17 +1683,17 @@ void Process_Buffer(char *Buffer, int size)
     /////////////////////////////////////////////////////////////////////
     // Compressor Init
     // attack and release "per sample decay"
-    att = (tatt == 0.0) ? (0.0) : exp (-1.0 / (sr * tatt));
-    rel = (trel == 0.0) ? (0.0) : exp (-1.0 / (sr * trel));
+    ///att = (tatt == 0.0) ? (0.0) : exp (-1.0 / (sr * tatt));
+    ///rel = (trel == 0.0) ? (0.0) : exp (-1.0 / (sr * trel));
     /////////////////////////////////////////////////////////////////////
     // Phaser Init
-    lfoInc=2*3.14159*SweepRate_Ph/sr;
+    lfoInc=2*_pi*SweepRate_Ph/sr;
     dmin=BaseFreq_Ph/(sr/2);
     dmax=OffsetFreq_Ph/(sr/2);
     /////////////////////////////////////////////////////////////////////
     // Wah Init
     //2nd method
-    Inc_Wah=2*3.14159*SweepRate_Wah/sr;
+    Inc_Wah=2*_pi*SweepRate_Wah/sr;
     dmin_Wah=BaseFreq_Wah/(sr/2);
     dmax_Wah=OffsetFreq_Wah/(sr/2);
     /////////////////////////////////////////////////////////////////////
@@ -1263,7 +1735,7 @@ void Process_Buffer(char *Buffer, int size)
         ////////////////////////////////////////////
 
         //Noise Filter
-        if (Enable_Filter)
+        if (Enable_Filter||Enabled_Synth)
         {
             float L=(float)i_sample_L;
             float R=(float)i_sample_R;
@@ -1271,7 +1743,6 @@ void Process_Buffer(char *Buffer, int size)
             i_sample_L=(int)L;
             i_sample_R=(int)R;
         }
-        // Add FX
         if (Enabled_Comp)
         {
             float L=(float)i_sample_L;
@@ -1280,6 +1751,15 @@ void Process_Buffer(char *Buffer, int size)
             i_sample_L=(int)L;
             i_sample_R=(int)R;
         }//compressor
+        if (Enabled_Synth)
+        {
+            float L=(float)i_sample_L;
+            float R=(float)i_sample_R;
+            Sample_Synth(&L,&R);
+            i_sample_L=(int)L;
+            i_sample_R=(int)R;
+        }//Synth
+        // Add FX
         if (Enabled_Wah)
         {
             float L=(float)i_sample_L;
@@ -1295,8 +1775,12 @@ void Process_Buffer(char *Buffer, int size)
         }// Clipping ...
         if (Enabled_Tr)
         {
-            i_sample_L=Sample_Tremolo(i_sample_L,Period_Tr,Depth_Tr);
-            i_sample_R=Sample_Tremolo(i_sample_R,Period_Tr,Depth_Tr);
+            float L=(float)i_sample_L;
+            float R=(float)i_sample_R;
+            Sample_Tremolo(&L, &R, Period_Tr,Depth_Tr);
+            i_sample_L=(int)L;
+            i_sample_R=(int)R;
+            //i_sample_R=Sample_Tremolo(i_sample_R,Period_Tr,Depth_Tr);
         }// Tremolo
         if (Enabled_Ch)
         {
@@ -1322,14 +1806,14 @@ void Process_Buffer(char *Buffer, int size)
             i_sample_L=(int)L;
             i_sample_R=(int)R;
         }//Pitch Shifter
-        if (Enabled_Vib||Enabled_Ch||Enabled_Sh)
+        if (Enabled_Vib||Enabled_Ch||Enabled_Sh|Enabled_Synth)
         {
             float L=(float)i_sample_L;
             float R=(float)i_sample_R;
             Sample_OFilter(&L,&R,Points_OFilter);
             i_sample_L=(int)L;
             i_sample_R=(int)R;
-        }
+        }//output filter
         if (Enabled_Ph)
         {
             float L=(float)i_sample_L;
@@ -1405,16 +1889,16 @@ void Process_2Buffers(float *BufferL,float *BufferR, int size)
     /////////////////////////////////////////////////////////////////////
     // Compressor Init
     // attack and release "per sample decay"
-    att = (tatt == 0.0) ? (0.0) : exp (-1.0 / (sr * tatt));
-    rel = (trel == 0.0) ? (0.0) : exp (-1.0 / (sr * trel));
+    ///att = (tatt == 0.0) ? (0.0) : exp (-1.0 / (sr * tatt));
+    ///rel = (trel == 0.0) ? (0.0) : exp (-1.0 / (sr * trel));
     /////////////////////////////////////////////////////////////////////
     // Phaser Init
-    lfoInc=2*3.14159*SweepRate_Ph/sr;
+    lfoInc=2*_pi*SweepRate_Ph/sr;
     dmin=BaseFreq_Ph/(sr/2);
     dmax=OffsetFreq_Ph/(sr/2);
     /////////////////////////////////////////////////////////////////////
     // Wah Init
-    Inc_Wah=2*3.14159*SweepRate_Wah/sr;
+    Inc_Wah=2*_pi*SweepRate_Wah/sr;
     dmin_Wah=BaseFreq_Wah/(sr/2);
     dmax_Wah=OffsetFreq_Wah/(sr/2);
     /////////////////////////////////////////////////////////////////////
@@ -1422,6 +1906,7 @@ void Process_2Buffers(float *BufferL,float *BufferR, int size)
 
     while (i<size)
     {
+
         SN=(SN++)%(SamplingRate*10); //counts to 10 seconds samples and then returns to 0
 
         L1=BufferL[i];
@@ -1432,7 +1917,7 @@ void Process_2Buffers(float *BufferL,float *BufferR, int size)
         ////////////////////////////////////////////
 
         // Show Volume
-        long imax = (L1>R1)?L1:R1;
+        long imax = (L1>R1)?L1*32600:R1*32600;
         if (imax>previusInputSampleMagnitude)
         {
             iascending=true;
@@ -1446,7 +1931,11 @@ void Process_2Buffers(float *BufferL,float *BufferR, int size)
         ////////////////////////////////////////////
 
         //Noise Filter
-        if (Enable_Filter)
+        ///if (MIDIExists&&MIDISynthEnabled)
+        ///{
+        ///    MIDI_Synth(&L1,&R1);
+        ///}
+        if (Enable_Filter/*||Enabled_Synth*/)
         {
             Sample_Filter(&L1,&R1,Points_Filter);
         }
@@ -1455,6 +1944,10 @@ void Process_2Buffers(float *BufferL,float *BufferR, int size)
         {
             Sample_Comp(&L1,&R1,BufferLen_Comp);
         }//compressor
+        if (Enabled_Synth)
+        {
+            Sample_Synth(&L1,&R1);
+        }//Synth
         if (Enabled_Wah)
         {
             Sample_Wah(&L1,&R1);
@@ -1466,8 +1959,8 @@ void Process_2Buffers(float *BufferL,float *BufferR, int size)
         }// Clipping ...
         if (Enabled_Tr)
         {
-            L1=Sample_Tremolo(L1,Period_Tr,Depth_Tr);
-            R1=Sample_Tremolo(R1,Period_Tr,Depth_Tr);
+            Sample_Tremolo(&L1,&R1,Period_Tr,Depth_Tr);
+            //R1=Sample_Tremolo(R1,Period_Tr,Depth_Tr);
         }// Tremolo
         if (Enabled_Ch)
         {
@@ -1481,10 +1974,10 @@ void Process_2Buffers(float *BufferL,float *BufferR, int size)
         {
             Sample_Shifter(&L1,&R1,Shift_Sh,MaxD_Sh,FeedBack_Sh,Wet_Sh,Dry_Sh);
         }//Pitch Shifter
-        if (Enabled_Vib||Enabled_Ch||Enabled_Sh)
+        if (Enabled_Vib||Enabled_Ch||Enabled_Sh||Enabled_Synth)
         {
             Sample_OFilter(&L1,&R1,Points_OFilter);
-        }
+        }//Output Noise Filter
         if (Enabled_Ph)
         {
             Sample_Phaser(&L1,&R1);
@@ -1500,13 +1993,17 @@ void Process_2Buffers(float *BufferL,float *BufferR, int size)
         if (Enabled_EQ)
         {
             Sample_EQ(&L1,&R1);
-        }//Delay
+        }//EQ
+        if (Enabled_Looper)
+        {
+            ///looper.newSample(&L1,&R1,Rec_Buffer,Play_Buffer);
+        }//Looper
         // Adjust Output Volume by main faders' indication
         Sample_Volume(&L1,&R1,Volume);
         ////////////////////////////////////////////
 
         // Show Volume
-        long max = (L1>R1)?L1:R1;
+        long max = (L1>R1)?L1*32600:R1*32600;
         if (max>previusSampleMagnitude)
         {
             ascending=true;
@@ -1526,10 +2023,13 @@ void Process_2Buffers(float *BufferL,float *BufferR, int size)
     }
 }
 
+////////////////////////////////////////////////////////////
+
 // JACK /////////////////////////////////////////////////////////////////
 
 // declare two "jack_port_t" pointers, which will each represent a port
 // in the JACK graph (ie: Connections tab in QJackCtl)
+jack_port_t* midiinputPort = 0;
 jack_port_t* inputPortL = 0;
 jack_port_t* outputPortL = 0;
 jack_port_t* inputPortR = 0;
@@ -1542,6 +2042,10 @@ jack_port_t* outputPortR = 0;
 // so that you can work with any amount of frames per process() call!
 int process(jack_nframes_t nframes, void* )
 {
+    //midi
+    ///handleMIDI();
+    //audio
+
     // here's a touch tricky, port_get_buffer() will return a pointer to
     // the data that we will use, so cast it to (float*), so that we
     // can use the data as floating point numbers. JACK will always pass
@@ -1573,13 +2077,17 @@ int myJack()
     //std::cout << "JACK client tutorial" << std::endl;
 
     // create a JACK client and activate
-    client = jack_client_open ("astyl",
-                                            JackNullOption,
-                                            0,
-                                            0 );
+    //Deprecated function but more powerfull...
+    // ...runs even if jackd is not running and automatically starts jackd.
+    // Maybe in later version it will not run at all... :(
+    client = jack_client_open ("astyl",JackNullOption,0,0);
+    //client = jack_client_new ("astyl");
 
     // register the process callback
     jack_set_process_callback  (client, process , 0);
+
+    //register the midi in port
+    //midiinputPort  = jack_port_register (client, "midi_in", JACK_DEFAULT_MIDI_TYPE, JackPortIsInput, 0);
 
     // register two ports, one input one output, both of AUDIO type
     inputPortL = jack_port_register ( client,
@@ -1605,8 +2113,15 @@ int myJack()
                                     JACK_DEFAULT_AUDIO_TYPE,
                                     JackPortIsOutput,
                                     0 );
+    jack_nframes_t fr1=(jack_nframes_t)256;
+    int ij= jack_set_buffer_size(client,fr1);
     jack_nframes_t fr = jack_get_sample_rate(client);
     SamplingRate=(long)fr;
+    if (SamplingRate!=44100)
+    {
+        ///delete &looper;
+        ///looper = Looper(SamplingRate, Rec_Buffer, Play_Buffer);
+    }
 
     // activate the client, ie: enable it for processing
     jack_activate(client);
@@ -1637,6 +2152,14 @@ int myJack()
         exit(1);
     }
 
+    if (jack_connect (client, jack_port_name (outputPortL), ports[0]))
+    {
+        fprintf (stderr, "cannot connect output ports\n");
+    }
+    if (jack_connect (client, jack_port_name (outputPortR), ports[1]))
+    {
+        fprintf (stderr, "cannot connect output ports\n");
+    }
     if (jack_connect (client, jack_port_name (outputPortL), ports[2]))
     {
         fprintf (stderr, "cannot connect output ports\n");
@@ -1647,6 +2170,5 @@ int myJack()
     }
 
     free (ports);
-
 }
 

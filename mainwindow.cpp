@@ -2,6 +2,9 @@
 #include "ui_mainwindow.h"
 #include "QVariant"
 #include <QTimer>
+
+bool useJack=true;
+
 #include "FX.cpp"
 #include "myAlsa.cpp"
 //#include "myJack.cpp"
@@ -10,7 +13,6 @@
 #include <QDebug>
 
 QTimer *timer;
-bool useJack=true;
 
 MainWindow::MainWindow(QWidget *parent) :
     QMainWindow(parent),
